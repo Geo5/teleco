@@ -27,8 +27,18 @@ DeviceIP OBJECT-TYPE
     ::= { agent 3 }
 
 
-TableEntry ::= SEQUENCE {
+HistoryEntry ::= SEQUENCE {
    DayOfYear INTEGER (1..365)
+   Entered INTEGER
+   Left INTEGER
 }
+
+
+History OBJECT-TYPE
+    SYNTAX SEQUENCE OF HistoryEntry
+    MAX-ACCESS read
+    STATUS current
+    DESCRIPTON "Device IP address"
+    ::= { agent 4 }
 
 END
