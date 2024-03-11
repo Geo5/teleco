@@ -1,0 +1,10 @@
+IP-MIB DEFINITIONS ::= BEGIN
+
+IMPORTS
+    mib-2                FROM SNMPv2-SMI;
+
+
+Entered ::= INTEGER -- Number of people which entered
+Left ::= INTEGER -- Number of people which left
+
+END
