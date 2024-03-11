@@ -36,7 +36,7 @@ HistoryEntry ::= SEQUENCE {
 
 History OBJECT-TYPE
     SYNTAX SEQUENCE OF HistoryEntry
-    MAX-ACCESS read
+    MAX-ACCESS read-write
     STATUS current
     DESCRIPTON "Device IP address"
     ::= { agent 4 }
