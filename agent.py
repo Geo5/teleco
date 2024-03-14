@@ -3,6 +3,7 @@ import sys
 from argparse import ArgumentParser
 from dataclasses import dataclass
 from enum import IntEnum
+from typing import Self
 
 
 class Asn1DataType(IntEnum):
@@ -28,6 +29,29 @@ class ObjectType(IntEnum):
     column = 3
 
 
+class PDUType(IntEnum):
+    GetRequest = 0xA0
+    GetNextRequest = 0xA1
+    GetResponse = 0xA2
+    SetRequest = 0xA3
+
+
+class ErrorStatus(IntEnum):
+    noError = 0
+    tooBig = 1
+    noSuchName = 2
+    badValue = 3
+    readOnly = 4
+    genErr = 5
+
+
+@dataclass
+class VariableBind:
+    oid: str
+    data_type: Asn1DataType
+    value: int | bytes
+
+
 @dataclass
 class Object:
     data_type: Asn1DataType
@@ -41,36 +65,98 @@ def read_tlv_int(message: bytes) -> tuple[int, int]:
     """Read an BER encoded int."""
     data_type, content = decode_tlv(message)
     if data_type != Asn1DataType.INTEGER:
-        raise ValueError("Not an integer")
+        raise ValueError(f"Not an integer (is {data_type})")
 
     return int.from_bytes(content, "big"), len(content) + 2
 
 
 def decode_tlv(message: bytes) -> tuple[Asn1DataType, bytes]:
-    if message[0] not in Asn1DataType:
-        raise ValueError(f"Unknown data type: {hex(message[0])}")
+    print(message.hex(" ", 1))
+    # print(f"{message[0]:b}")
+    data_type = Asn1DataType(message[0])
 
     length = message[1]
     if length & 0b1000000:
         raise ValueError("Indefinite length not supported")
 
-    return Asn1DataType(message[0]), message[2 : 2 + length]
+    return data_type, message[2 : 2 + length]
 
 
+def decode_oid(value: bytes) -> str:
+    """Decode OID number."""
+    print(f"{value=}")
+    print(f"{value[0]=}")
+    print(f"{(value[0] & 0xEF) // 40}")
+    print(f"{(value[0] % 0xEF) % 40}")
+    oids = [(value[0] & 0xEF) // 40, (value[0] & 0xEF) % 40]
+    for byte in value[1:]:
+        oids.append(byte & 0xEF)
+
+    return ".".join(str(oid) for oid in oids)
+
+
+@dataclass
 class SNMPMessage:
-    def __init__(self, message) -> None:
+    version: int
+    community: str
+    pdu_type: PDUType
+    request_id: int
+    error_status: ErrorStatus
+    error_index: int
+    variable_bindings: list[VariableBind]
+
+    @classmethod
+    def from_bytes(cls, message: bytes) -> Self:
         if not message:
             raise ValueError("Message empty")
 
         if message[0] != Asn1DataType.SEQUENCE:
             raise ValueError("Not a sequence")
 
-        self.version, length = read_tlv_int(message[2:])
+        version, length = read_tlv_int(message[2:])
         message = message[2 + length :]
 
-        data_type, self.community = decode_tlv(message)
+        data_type, community = decode_tlv(message)
         if data_type != Asn1DataType.OCTET_STRING:
             raise ValueError("Community not octet string")
+        message = message[2 + len(community) :]
+        # Parse pdu type
+        pdu_type = PDUType(message[0])
+        message = message[2:]
+
+        request_id, length = read_tlv_int(message)
+        message = message[length:]
+
+        error_status_number, length = read_tlv_int(message)
+        error_status = ErrorStatus(error_status_number)
+        message = message[length:]
+
+        error_index, length = read_tlv_int(message)
+        message = message[length:]
+
+        if message[0] != Asn1DataType.SEQUENCE or message[2] != Asn1DataType.SEQUENCE:
+            raise ValueError("Invalid message, expected variable bindings sequence")
+        message = message[4:]
+
+        variable_bindings = []
+        while message:
+            data_type, oid = decode_tlv(message)
+            if data_type != Asn1DataType.OBJECT_IDENTIFIER:
+                raise ValueError("Expected object identifier")
+            message = message[len(oid) + 2 :]
+            data_type, value = decode_tlv(message)
+            message = message[len(value) + 2 :]
+            variable_bindings.append(VariableBind(decode_oid(oid), data_type, value))
+
+        return SNMPMessage(
+            version,
+            community.decode("ASCII"),
+            pdu_type,
+            request_id,
+            error_status,
+            error_index,
+            variable_bindings,
+        )
 
 
 def main(args: list[str]) -> None:
@@ -83,18 +169,12 @@ def main(args: list[str]) -> None:
     sock = socket.socket(type=socket.SOCK_DGRAM)
     sock.bind(("127.0.0.1", port))
 
-    store = {
-        "some integer": Object(
-            Asn1DataType.INTEGER, length=1, value=1, max_access=MaxAccess.read_only
-        ),
-        "some integer 2": Object(
-            Asn1DataType.INTEGER, length=1, value=2, max_access=MaxAccess.read_write
-        ),
-    }
-
     while True:
         message, addr = sock.recvfrom(bufsize)
         print(f"Received message from {addr} ({len(message)}): {message.hex(' ', 1)}")
+
+        snmp_message = SNMPMessage.from_bytes(message)
+        print(snmp_message)
 
 
 if __name__ == "__main__":
