@@ -54,7 +54,6 @@ class VariableBind:
 @dataclass
 class Object:
     data_type: Asn1DataType
-    length: int
     value: int | bytes
     object_type: ObjectType = ObjectType.scalar
     max_access: MaxAccess = MaxAccess.not_accessible
@@ -106,6 +105,20 @@ def decode_tlv(buffer: bytes) -> tuple[bytes, Asn1DataType, bytes | None]:
         raise ValueError(msg)
 
     return buffer[2 + length :], data_type, buffer[2 : 2 + length]
+
+
+def decode_tlv_value(
+    buffer: bytes,
+) -> tuple[bytes, Asn1DataType, int | str | bytes | None]:
+    """Like decode_tlv but tries to decode the resulting value to a concrete type."""
+    buffer, data_type, value = decode_tlv(buffer)
+    match data_type:
+        case Asn1DataType.INTEGER:
+            value = int.from_bytes(value, "big")
+        case Asn1DataType.OCTET_STRING:
+            value = value.decode("ASCII")
+
+    return buffer, data_type, value
 
 
 def read_tlv_int(buffer: bytes) -> tuple[bytes, int]:
@@ -372,7 +385,7 @@ class SNMPMessage:
             # Variable binding is also sequence type
             buffer, var = read_tlv_sequence(buffer)
             var, oid = read_tlv_oid(var)
-            _, data_type, value = decode_tlv(var)
+            _, data_type, value = decode_tlv_value(var)
             variable_bindings.append(VariableBind(oid, data_type, value))
 
         return SNMPMessage(
@@ -403,6 +416,24 @@ class SNMPMessage:
 
         return encode_tlv_value(Asn1DataType.SEQUENCE, buffer)
 
+    def response(self) -> Self:
+        """Construct a response to a message."""
+        match self.pdu_type:
+            case PDUType.GetRequest | PDUType.SetRequest:
+                new_pdu_type = PDUType.GetResponse
+            case _:
+                raise NotImplementedError
+
+        return SNMPMessage(
+            self.version,
+            self.community,
+            new_pdu_type,
+            self.request_id,
+            ErrorStatus.noError,
+            0,
+            self.variable_bindings,
+        )
+
 
 def main(args: list[str]) -> None:
     # Parse command line arguments
@@ -414,6 +445,17 @@ def main(args: list[str]) -> None:
     bufsize = 2048
     sock = socket.socket(type=socket.SOCK_DGRAM)
     sock.bind(("127.0.0.1", port))
+    # Setup data
+    objects = {
+        # Entered
+        "1.3.6.1.3.1.0": Object(
+            Asn1DataType.INTEGER, 0, max_access=MaxAccess.read_write
+        ),
+        # Left
+        "1.3.6.1.3.2.0": Object(
+            Asn1DataType.INTEGER, 0, max_access=MaxAccess.read_write
+        ),
+    }
     # Read-write loop
     while True:
         message, addr = sock.recvfrom(bufsize)
@@ -421,8 +463,49 @@ def main(args: list[str]) -> None:
 
         snmp_message, _ = SNMPMessage.from_bytes(message)
         print(snmp_message)
+        # Handle message
+        response = snmp_message.response()
+        match snmp_message.pdu_type:
+            case PDUType.SetRequest:
+                # Update the variables
+                for idx, var in enumerate(snmp_message.variable_bindings):
+                    # Check if oid exists
+                    if var.oid not in objects:
+                        response.error_index = idx
+                        response.error_status = ErrorStatus.noSuchName
+                        break
+                    obj = objects[var.oid]
+                    # Check if we have write access
+                    if obj.max_access != MaxAccess.read_write:
+                        response.error_index = idx
+                        response.error_status = ErrorStatus.noSuchName
+                        break
+                    # Check if type is compatible
+                    if obj.data_type != var.data_type:
+                        response.error_index = idx
+                        response.error_status = ErrorStatus.badValue
+                        break
+                    # Set the new value
+                    obj.value = var.value
+            case PDUType.GetRequest:
+                # Look up all oids in the objects map
+                # and construct a new list of variable bindings with the values found there
+                new_var_bindings = []
+                for idx, var in enumerate(snmp_message.variable_bindings):
+                    # Check if name exists
+                    if var.oid not in objects:
+                        response.error_index = idx
+                        response.error_status = ErrorStatus.noSuchName
+                        break
+                    obj = objects[var.oid]
+                    # Update variable binding with type and value
+                    new_var_bindings.append(
+                        VariableBind(var.oid, obj.data_type, obj.value)
+                    )
+                response.variable_bindings = new_var_bindings
 
-        print(snmp_message.encode_tlv().hex(" ", 1))
+        print(f"Answer is {response}")
+        sock.sendto(response.encode_tlv(), addr)
 
 
 if __name__ == "__main__":
