@@ -503,7 +503,19 @@ def main(args: list[str]) -> None:
                         VariableBind(var.oid, obj.data_type, obj.value)
                     )
                 response.variable_bindings = new_var_bindings
-
+                #case PDUType.GetNextRequest:
+                # Find the next OID in the objects map
+               # next_oid_index = None
+               # for idx, var in enumerate(snmp_message.variable_bindings):
+                    #if var.oid in objects:
+                       # next_oid_index = idx + 1
+                      #  break
+                # if next_oid_index is not None and next_oid_index < len(snmp_message.variable_bindings):
+                    # next_oid = snmp_message.variable_bindings[next_oid_index].oid
+                     #obj = objects[next_oid]
+                     #response.variable_bindings = [VariableBind(next_oid, obj.data_type, obj.value)]
+                 #else:
+                     #response.error_status = ErrorStatus.noSuchName
         print(f"Answer is {response}")
         sock.sendto(response.encode_tlv(), addr)
 
