@@ -7,10 +7,12 @@ import sys
 from argparse import ArgumentParser
 from dataclasses import dataclass
 from enum import IntEnum
-from typing import Self, TypeVar
+from typing import Self, TypeVar, cast
 
 
 class Asn1DataType(IntEnum):
+    """Asn1 data type."""
+
     INTEGER = 0x02
     OCTET_STRING = 0x04
     NULL_asn1 = 0x05
@@ -18,17 +20,23 @@ class Asn1DataType(IntEnum):
     SEQUENCE = 0x30
     IpAddress = 0x40
     Gauge32 = 0x42
-    # CHOICE has a context specific tag ( 0b10[1|0]00000 )
+    # CHOICE has a context specific tag (encoded as 0b10[1|0]0_0000 )
+    # Value is > 0xFF, so it cannot occur as normal asn1 type,
+    # because the length of the type is 1 byte (max 0xFF)
     CHOICE = 0xFFF
 
 
 class MaxAccess(IntEnum):
+    """Object access permission."""
+
     not_accessible = 0
     read_only = 1
     read_write = 2
 
 
 class ObjectType(IntEnum):
+    """Managed object type."""
+
     scalar = 0
     table = 1
     row = 2
@@ -36,6 +44,8 @@ class ObjectType(IntEnum):
 
 
 class ErrorStatus(IntEnum):
+    """SNMP message error status."""
+
     noError = 0
     tooBig = 1
     noSuchName = 2
@@ -46,15 +56,25 @@ class ErrorStatus(IntEnum):
 
 @dataclass
 class VariableBind:
+    """SNMP message variable bindings.
+
+    Type of value depends on data_type.
+    """
+
     oid: str
     data_type: Asn1DataType
-    value: int | bytes
+    value: int | bytes | str | None
 
 
 @dataclass
 class Object:
+    """Managed objects.
+
+    Type of value depends on data_type.
+    """
+
     data_type: Asn1DataType
-    value: int | bytes
+    value: int | bytes | str | None
     object_type: ObjectType = ObjectType.scalar
     max_access: MaxAccess = MaxAccess.not_accessible
 
@@ -111,12 +131,16 @@ def decode_tlv_value(
     buffer: bytes,
 ) -> tuple[bytes, Asn1DataType, int | str | bytes | None]:
     """Like decode_tlv but tries to decode the resulting value to a concrete type."""
-    buffer, data_type, value = decode_tlv(buffer)
+    buffer, data_type, raw_value = decode_tlv(buffer)
+    if raw_value is None:
+        return buffer, data_type, raw_value
     match data_type:
         case Asn1DataType.INTEGER:
-            value = int.from_bytes(value, "big")
+            value: int | str | bytes | None = int.from_bytes(raw_value, "big")
         case Asn1DataType.OCTET_STRING:
-            value = value.decode("ASCII")
+            value = raw_value.decode("ASCII")
+        case _:
+            value = raw_value
 
     return buffer, data_type, value
 
@@ -138,7 +162,7 @@ def read_tlv_int(buffer: bytes) -> tuple[bytes, int]:
 
     """
     buffer, data_type, value = decode_tlv(buffer)
-    if data_type != Asn1DataType.INTEGER:
+    if data_type != Asn1DataType.INTEGER or value is None:
         msg = f"Not an integer (is {data_type})"
         raise ValueError(msg)
 
@@ -162,7 +186,7 @@ def read_tlv_string(buffer: bytes) -> tuple[bytes, str]:
 
     """
     buffer, data_type, value = decode_tlv(buffer)
-    if data_type != Asn1DataType.OCTET_STRING:
+    if data_type != Asn1DataType.OCTET_STRING or value is None:
         msg = f"Not a string (is {data_type})"
         raise ValueError(msg)
 
@@ -182,7 +206,7 @@ def read_tlv_sequence(buffer: bytes) -> tuple[bytes, bytes]:
 
     """
     buffer, data_type, value = decode_tlv(buffer)
-    if data_type != Asn1DataType.SEQUENCE:
+    if data_type != Asn1DataType.SEQUENCE or value is None:
         msg = f"Not a sequence (is {data_type})"
         raise ValueError(msg)
 
@@ -242,7 +266,7 @@ def read_tlv_oid(buffer: bytes) -> tuple[bytes, str]:
 
     """
     buffer, data_type, value = decode_tlv(buffer)
-    if data_type != Asn1DataType.OBJECT_IDENTIFIER:
+    if data_type != Asn1DataType.OBJECT_IDENTIFIER or value is None:
         msg = f"Not an oid (is {data_type})"
         raise ValueError(msg)
 
@@ -251,9 +275,14 @@ def read_tlv_oid(buffer: bytes) -> tuple[bytes, str]:
 
 def encode_length(value: int) -> bytes:
     """Encode length for BER."""
+    # If length fits in 7 bits, we can encode it directly
     if value <= 0xEF:
         return value.to_bytes(1, "big")
-    return encode_lv_int(value)
+    # Otherwise we encode it like an integer
+    enc = encode_lv_int(value)
+    # We need to set the first bit to 1
+    enc = bytes(enc[0] | 0b1000_0000) + enc[1:]
+    return enc
 
 
 def encode_lv_oid(value: str) -> bytes:
@@ -289,6 +318,7 @@ def encode_lv_int(value: int) -> bytes:
         bytes: Buffer containing length and value information.
 
     """
+    # The minimum length is 1 byte, even if the value == 0
     enc = value.to_bytes(max(1, (value.bit_length() + 7) // 8), "big")
     return encode_length(len(enc)) + enc
 
@@ -319,8 +349,10 @@ def encode_tlv_value(data_type: Asn1DataType, value: int | str | bytes) -> bytes
         case Asn1DataType.OBJECT_IDENTIFIER:
             buffer += encode_lv_oid(value)
         case Asn1DataType.SEQUENCE:
+            value = cast(bytes, value)
             buffer += encode_length(len(value)) + value
         case Asn1DataType.OCTET_STRING:
+            value = cast(str, value)
             enc = value.encode("ASCII")
             buffer += encode_length(len(enc)) + enc
         case _:
@@ -329,12 +361,14 @@ def encode_tlv_value(data_type: Asn1DataType, value: int | str | bytes) -> bytes
     return buffer
 
 
-def encode_tlv_choice(value: IntEnum, content: bytes) -> None:
+def encode_tlv_choice(value: IntEnum, content: bytes) -> bytes:
     """Encode a choice with contents."""
     return bytes([0b1010_0000 | value]) + encode_length(len(content)) + content
 
 
 class PDUType(IntEnum):
+    """SNMP request type."""
+
     GetRequest = 0
     GetNextRequest = 1
     GetResponse = 2
@@ -343,6 +377,8 @@ class PDUType(IntEnum):
 
 @dataclass
 class SNMPMessage:
+    """SNMP message object."""
+
     version: int
     community: str
     pdu_type: PDUType
@@ -352,7 +388,7 @@ class SNMPMessage:
     variable_bindings: list[VariableBind]
 
     @classmethod
-    def from_bytes(cls, buffer: bytes) -> tuple[Self, bytes]:
+    def from_bytes(cls, buffer: bytes) -> tuple[SNMPMessage, bytes]:
         """Construct SNMP message from bytes.
 
         Args:
@@ -416,10 +452,22 @@ class SNMPMessage:
 
         return encode_tlv_value(Asn1DataType.SEQUENCE, buffer)
 
-    def response(self) -> Self:
-        """Construct a response to a message."""
+    def response(self) -> SNMPMessage:
+        """Construct a response to a message.
+
+        Variable bindings (in case of a GetRequest message) need to be changed
+        afterwards by manually changing self.variable_bindings.
+
+        error_status and error_index are not changed.
+
+        Returns
+        -------
+            A new SNMPMessage object containing copied values from self.
+
+        """
         match self.pdu_type:
-            case PDUType.GetRequest | PDUType.SetRequest:
+            case PDUType.GetRequest | PDUType.SetRequest | PDUType.GetNextRequest:
+                # Response to GetRequest and SetRequest is GetResponse
                 new_pdu_type = PDUType.GetResponse
             case _:
                 raise NotImplementedError
@@ -431,92 +479,161 @@ class SNMPMessage:
             self.request_id,
             ErrorStatus.noError,
             0,
-            self.variable_bindings,
+            self.variable_bindings.copy(),
         )
 
 
-def main(args: list[str]) -> None:
+# Setup managed objects
+MANAGED_OBJECTS = {
+    # Entered
+    "1.3.6.1.3.1.0": Object(
+        Asn1DataType.INTEGER,
+        0,
+        max_access=MaxAccess.read_write,
+    ),
+    # Left
+    "1.3.6.1.3.2.0": Object(
+        Asn1DataType.INTEGER,
+        0,
+        max_access=MaxAccess.read_write,
+    ),
+}
+
+
+def get_next(oid: str) -> tuple[str, Object] | tuple[None, None]:
+    """Get next accessible element in the MIB for a given OID.
+
+    Args:
+    ----
+        oid: The original OID.
+
+    Returns:
+    -------
+        The next OID and the next managed object in the MIB or None if none exists.
+
+    """
+    # Sort objects by OID lexicographically
+    objects = sorted(MANAGED_OBJECTS.items(), key=lambda t: t[0])
+    # Get first object which is accessible and has a greater OID
+    next_oid, next_obj = next(
+        (
+            (o, obj)
+            for o, obj in objects
+            if o > oid and obj.max_access != MaxAccess.not_accessible
+        ),
+        (None, None),
+    )
+    return next_oid, next_obj
+
+
+def handle_snmp_message(message: SNMPMessage) -> SNMPMessage:
+    """Construct response message and handle possible action.
+
+    Args:
+    ----
+        message: The incoming SNMP request message.
+
+    Returns:
+    -------
+        The response SNMP message.
+
+    """
+    response = message.response()
+    match message.pdu_type:
+        case PDUType.GetRequest:
+            # Look up all OIDs in the objects map
+            # and construct a new list of variable bindings with the values found there
+            new_var_bindings = []
+            for idx, var in enumerate(message.variable_bindings):
+                # Check if OID exists
+                if (
+                    not (obj := MANAGED_OBJECTS.get(var.oid, None))
+                    or obj.max_access == MaxAccess.not_accessible
+                ):
+                    # OID does not exist or is not accessible
+                    # Set error status and index
+                    response.error_index = idx
+                    response.error_status = ErrorStatus.noSuchName
+                    # Return otherwise identical message
+                    return response
+                # Update variable binding with type and value
+                new_var_bindings.append(
+                    VariableBind(var.oid, obj.data_type, obj.value),
+                )
+            # Update the variable bindings
+            response.variable_bindings = new_var_bindings
+        case PDUType.SetRequest:
+            # First check if all variable bindings are valid
+            for idx, var in enumerate(message.variable_bindings):
+                # Check if OID exists and we have write access
+                if (
+                    not (obj := MANAGED_OBJECTS.get(var.oid, None))
+                    or obj.max_access != MaxAccess.read_write
+                ):
+                    response.error_index = idx
+                    response.error_status = ErrorStatus.noSuchName
+                    return response
+                # Check if type is compatible
+                if obj.data_type != var.data_type:
+                    response.error_index = idx
+                    response.error_status = ErrorStatus.badValue
+                    return response
+            # Only after making sure all are valid, set the values
+            for var in message.variable_bindings:
+                # Set the new value
+                MANAGED_OBJECTS[var.oid].value = var.value
+                # We don't need to update the variable bindings here, because the value is
+                # set to the value contained in the incoming request.
+        case PDUType.GetNextRequest:
+            new_var_bindings = []
+            for idx, var in enumerate(message.variable_bindings):
+                # Find the next OID in the objects map
+                next_oid, next_object = get_next(var.oid)
+                # If no new next element exists, we set the error status
+                if next_oid is None or next_object is None:
+                    response.error_index = idx
+                    response.error_status = ErrorStatus.noSuchName
+                    # Return otherwise identical message
+                    return response
+                # Update variable binding with type and value
+                new_var_bindings.append(
+                    VariableBind(next_oid, next_object.data_type, next_object.value),
+                )
+            # Update the variable bindings
+            response.variable_bindings = new_var_bindings
+    return response
+
+
+def main(args_: list[str]) -> None:
+    """Main function."""
     # Parse command line arguments
     parser = ArgumentParser()
     parser.add_argument("-p", "--port", default=161, type=int)
-    args = parser.parse_args(args)
+    args = parser.parse_args(args_)
     port = args.port
+    host = "127.0.0.1"
     # Setup socket
     bufsize = 2048
     sock = socket.socket(type=socket.SOCK_DGRAM)
-    sock.bind(("127.0.0.1", port))
-    # Setup data
-    objects = {
-        # Entered
-        "1.3.6.1.3.1.0": Object(
-            Asn1DataType.INTEGER, 0, max_access=MaxAccess.read_write
-        ),
-        # Left
-        "1.3.6.1.3.2.0": Object(
-            Asn1DataType.INTEGER, 0, max_access=MaxAccess.read_write
-        ),
-    }
+    sock.bind((host, port))
+    # Add device IP to managed objects
+    MANAGED_OBJECTS["1.3.6.1.3.3.0"] = Object(
+        Asn1DataType.IpAddress,
+        host,
+        max_access=MaxAccess.read_write,
+    )
     # Read-write loop
     while True:
+        # Receive message
         message, addr = sock.recvfrom(bufsize)
         print(f"Received message from {addr} ({len(message)}): {message.hex(' ', 1)}")
-
+        # Parse SNMP message into object
         snmp_message, _ = SNMPMessage.from_bytes(message)
         print(snmp_message)
-        # Handle message
-        response = snmp_message.response()
-        match snmp_message.pdu_type:
-            case PDUType.SetRequest:
-                # Update the variables
-                for idx, var in enumerate(snmp_message.variable_bindings):
-                    # Check if oid exists
-                    if var.oid not in objects:
-                        response.error_index = idx
-                        response.error_status = ErrorStatus.noSuchName
-                        break
-                    obj = objects[var.oid]
-                    # Check if we have write access
-                    if obj.max_access != MaxAccess.read_write:
-                        response.error_index = idx
-                        response.error_status = ErrorStatus.noSuchName
-                        break
-                    # Check if type is compatible
-                    if obj.data_type != var.data_type:
-                        response.error_index = idx
-                        response.error_status = ErrorStatus.badValue
-                        break
-                    # Set the new value
-                    obj.value = var.value
-            case PDUType.GetRequest:
-                # Look up all oids in the objects map
-                # and construct a new list of variable bindings with the values found there
-                new_var_bindings = []
-                for idx, var in enumerate(snmp_message.variable_bindings):
-                    # Check if name exists
-                    if var.oid not in objects:
-                        response.error_index = idx
-                        response.error_status = ErrorStatus.noSuchName
-                        break
-                    obj = objects[var.oid]
-                    # Update variable binding with type and value
-                    new_var_bindings.append(
-                        VariableBind(var.oid, obj.data_type, obj.value)
-                    )
-                response.variable_bindings = new_var_bindings
-                #case PDUType.GetNextRequest:
-                # Find the next OID in the objects map
-               # next_oid_index = None
-               # for idx, var in enumerate(snmp_message.variable_bindings):
-                    #if var.oid in objects:
-                       # next_oid_index = idx + 1
-                      #  break
-                # if next_oid_index is not None and next_oid_index < len(snmp_message.variable_bindings):
-                    # next_oid = snmp_message.variable_bindings[next_oid_index].oid
-                     #obj = objects[next_oid]
-                     #response.variable_bindings = [VariableBind(next_oid, obj.data_type, obj.value)]
-                 #else:
-                     #response.error_status = ErrorStatus.noSuchName
-        print(f"Answer is {response}")
+        # Construct response and handle possible action (SetRequest)
+        response = handle_snmp_message(snmp_message)
+        # Send response back
+        print(f"Response is {response}")
         sock.sendto(response.encode_tlv(), addr)
 
 
