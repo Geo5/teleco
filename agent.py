@@ -139,6 +139,9 @@ def decode_tlv_value(
             value: int | str | bytes | None = int.from_bytes(raw_value, "big")
         case Asn1DataType.OCTET_STRING:
             value = raw_value.decode("ASCII")
+        case Asn1DataType.IpAddress:
+            addr = [str(b) for b in raw_value]
+            value = ".".join(addr)
         case _:
             value = raw_value
 
@@ -354,6 +357,12 @@ def encode_tlv_value(data_type: Asn1DataType, value: int | str | bytes) -> bytes
         case Asn1DataType.OCTET_STRING:
             value = cast(str, value)
             enc = value.encode("ASCII")
+            buffer += encode_length(len(enc)) + enc
+        case Asn1DataType.IpAddress:
+            value = cast(str, value)
+            enc = b""
+            for f in value.split("."):
+                enc += int(f).to_bytes(1, "big")
             buffer += encode_length(len(enc)) + enc
         case _:
             raise NotImplementedError
