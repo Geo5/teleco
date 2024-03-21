@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from enum import IntEnum
 
 # імпортує деякі об'єкти з модуля typing
-from typing import TypeVar, cast
+from typing import Self, TypeVar, cast
 
 
 class Asn1DataType(IntEnum):
@@ -25,6 +25,10 @@ class Asn1DataType(IntEnum):
 
     Перелік, що містить різні типи даних Asn1.
     """
+
+    # Optional type information for differentiating between different CHOICE values.
+    # Only set for CHOICE at the moment.
+    tag: int | None
 
     INTEGER = 0x02
     OCTET_STRING = 0x04
@@ -38,6 +42,17 @@ class Asn1DataType(IntEnum):
     # Value is > 0xFF, so it cannot occur as normal asn1 type,
     # because the length of the type is 1 byte (max 0xFF)
     CHOICE = 0xFFF
+
+    def __new__(cls, value: int) -> Self:
+        """Create a new enum member.
+
+        Sets the tag field to None.
+        """
+        obj = int.__new__(cls, value)
+        obj._value_ = value
+        obj._ignore_ = ["tag"]  # noqa: SLF001
+        obj.tag = None
+        return obj
 
 
 class MaxAccess(IntEnum):
@@ -273,7 +288,7 @@ def read_tlv_choice(buffer: bytes, choices: type[CT]) -> tuple[bytes, CT, bytes 
 
     """
     buffer, data_type, value = decode_tlv(buffer)
-    if data_type != Asn1DataType.CHOICE:
+    if data_type != Asn1DataType.CHOICE or data_type.tag is None:
         msg = f"Not a choice (is {data_type})"
         raise ValueError(msg)
 
