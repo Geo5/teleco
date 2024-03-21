@@ -2,29 +2,35 @@
 
 from __future__ import annotations
 
-"""імпортує модуль socket, який дозволяє використовувати функціональність для мережевого програмування, 
-зокрема для створення, з'єднання та обміну даними через сокети."""
+# імпортує модуль socket, який дозволяє використовувати функціональність для мережевого програмування,
+# зокрема для створення, з'єднання та обміну даними через сокети.
 import socket
 import sys
-"""дозволяє обробляти аргументи командного рядка в програмі"""
+
+# дозволяє обробляти аргументи командного рядка в програмі
 from argparse import ArgumentParser
-"""дозволяє створювати класи з автоматично згенерованими методами"""
+
+# дозволяє створювати класи з автоматично згенерованими методами
 from dataclasses import dataclass
-"""імпортує клас IntEnum з модуля enum, який дозволяє створювати переліки з цілими значеннями"""
+
+# імпортує клас IntEnum з модуля enum, який дозволяє створювати переліки з цілими значеннями
 from enum import IntEnum
-"""імпортує деякі об'єкти з модуля typing"""
-from typing import Self, TypeVar, cast 
+
+# імпортує деякі об'єкти з модуля typing
+from typing import TypeVar, cast
 
 
 class Asn1DataType(IntEnum):
-    """Asn1 data type."""
-    """ Перелік, що містить різні типи даних Asn1"""
+    """Asn1 data type.
+
+    Перелік, що містить різні типи даних Asn1.
+    """
 
     INTEGER = 0x02
     OCTET_STRING = 0x04
     NULL_asn1 = 0x05
     OBJECT_IDENTIFIER = 0x06
-    """тип даних ASN.1 для послідовностей (структур)"""
+    # тип даних ASN.1 для послідовностей (структур)"""
     SEQUENCE = 0x30
     IpAddress = 0x40
     Gauge32 = 0x42
@@ -35,16 +41,22 @@ class Asn1DataType(IntEnum):
 
 
 class MaxAccess(IntEnum):
-    """Object access permission."""
-"""Перелік, який визначає рівні доступу до об'єктів - not_accessible, read_only, read_write"""
+    """Object access permission.
+
+    Перелік, який визначає рівні доступу до об'єктів - not_accessible, read_only, read_write.
+    """
+
     not_accessible = 0
     read_only = 1
     read_write = 2
 
 
 class ObjectType(IntEnum):
-    """Managed object type."""
-"""Перелік, що визначає типи об'єктів(перелік, позначення таблиці, позначення рядків та стовпців таблиці"""
+    """Managed object type.
+
+    Перелік, що визначає типи об'єктів(перелік, позначення таблиці, позначення рядків та стовпців таблиці.
+    """
+
     scalar = 0
     table = 1
     row = 2
@@ -52,14 +64,17 @@ class ObjectType(IntEnum):
 
 
 class ErrorStatus(IntEnum):
-    """SNMP message error status."""
-"""Перелік, що визначає різні статуси помилок у SNMP повідомленнях"""
-    noError = 0 """вказує на відсутність помилок у SNMP повідомленні"""
-    tooBig = 1  """розмір повідомлення перевищує максимально допустимий"""
-    noSuchName = 2 """вказане ім'я не існує"""
-    badValue = 3 """передане значення недопустиме або неправильне."""
-    readOnly = 4 """об'єкт доступний лише для читання"""
-    genErr = 5 """загальна помилка"""
+    """SNMP message error status.
+
+    Перелік, що визначає різні статуси помилок у SNMP повідомленнях.
+    """
+
+    noError = 0  # вказує на відсутність помилок у SNMP повідомленні
+    tooBig = 1  # розмір повідомлення перевищує максимально допустимий
+    noSuchName = 2  # вказане ім'я не існує
+    badValue = 3  # передане значення недопустиме або неправильне.
+    readOnly = 4  # об'єкт доступний лише для читання
+    genErr = 5  # загальна помилка
 
 
 @dataclass
@@ -67,8 +82,10 @@ class VariableBind:
     """SNMP message variable bindings.
 
     Type of value depends on data_type.
+
+    Клас, який представляє зв'язки змінних в SNMP повідомленнях. Містить OID (Object Identifier), тип даних та значення.
     """
-"""Клас, який представляє зв'язки змінних в SNMP повідомленнях. Містить OID (Object Identifier), тип даних та значення"""
+
     oid: str
     data_type: Asn1DataType
     value: int | bytes | str | None
@@ -79,8 +96,10 @@ class Object:
     """Managed objects.
 
     Type of value depends on data_type.
+
+    Клас, який представляє керовані об'єкти у системі(Містить тип даних, значення, тип об'єкту та рівень доступу).
     """
-"""Клас, який представляє керовані об'єкти у системі(Містить тип даних, значення, тип об'єкту та рівень доступу)"""
+
     data_type: Asn1DataType
     value: int | bytes | str | None
     object_type: ObjectType = ObjectType.scalar
@@ -136,12 +155,15 @@ def decode_tlv(buffer: bytes) -> tuple[bytes, Asn1DataType, bytes | None]:
 
     return buffer[2 + length :], data_type, buffer[2 : 2 + length]
 
-"""Функція для кодування значення в TLV форматі за заданим типом даних."""
+
+# Функція для кодування значення в TLV форматі за заданим типом даних.
 def decode_tlv_value(
     buffer: bytes,
 ) -> tuple[bytes, Asn1DataType, int | str | bytes | None]:
-    """Like decode_tlv but tries to decode the resulting value to a concrete type."""
-    """Подібно до decode_tlv, але намагається декодувати отримане значення до конкретного типу"""
+    """Like decode_tlv but tries to decode the resulting value to a concrete type.
+
+    Подібно до decode_tlv, але намагається декодувати отримане значення до конкретного типу.
+    """
     buffer, data_type, raw_value = decode_tlv(buffer)
     if raw_value is None:
         return buffer, data_type, raw_value
@@ -209,7 +231,9 @@ def read_tlv_string(buffer: bytes) -> tuple[bytes, str]:
 
 def read_tlv_sequence(buffer: bytes) -> tuple[bytes, bytes]:
     """Read a sequence and its contents.
-            Прочитайте послідовність і її зміст.
+
+    Прочитайте послідовність і її зміст.
+
     Args:
     ----
         buffer: Buffer of bytes to read from.
@@ -218,6 +242,7 @@ def read_tlv_sequence(buffer: bytes) -> tuple[bytes, bytes]:
     -------
         The remaining (unread) buffer, the contents of the sequence
             Буфер, що залишився (непрочитаний), вміст послідовності
+
     """
     buffer, data_type, value = decode_tlv(buffer)
     if data_type != Asn1DataType.SEQUENCE or value is None:
@@ -232,7 +257,9 @@ CT = TypeVar("CT", bound=IntEnum)
 
 def read_tlv_choice(buffer: bytes, choices: type[CT]) -> tuple[bytes, CT, bytes | None]:
     """Read a choice value and its contents.
-        Прочитайте значення вибору та його вміст.
+
+    Прочитайте значення вибору та його вміст.
+
     Args:
     ----
         buffer: Buffer of bytes to read from.
@@ -265,19 +292,24 @@ def decode_oid(value: bytes) -> str:
 
 def read_tlv_oid(buffer: bytes) -> tuple[bytes, str]:
     """Read an encoded object identifier.
-        Прочитати закодований ідентифікатор об’єкта
+
+    Прочитати закодований ідентифікатор об’єкта
+
     Args:
     ----
         buffer: Buffer of bytes to read from.
         Буфер байтів для читання
+
     Raises:
     ------
         ValueError: If value is not an object identifier.
         Якщо значення не є ідентифікатором об'єкта
+
     Returns:
     -------
         The remaining (unread) buffer, the decoded oid.
         Залишковий (непрочитаний) буфер, декодований oid.
+
     """
     buffer, data_type, value = decode_tlv(buffer)
     if data_type != Asn1DataType.OBJECT_IDENTIFIER or value is None:
@@ -382,13 +414,19 @@ def encode_tlv_value(data_type: Asn1DataType, value: int | str | bytes) -> bytes
 
 
 def encode_tlv_choice(value: IntEnum, content: bytes) -> bytes:
-    """Encode a choice with contents.(Закодуйте вибір вмістом)"""
+    """Encode a choice with contents.
+
+    (Закодуйте вибір вмістом).
+    """
     return bytes([0b1010_0000 | value]) + encode_length(len(content)) + content
 
 
 class PDUType(IntEnum):
-    """SNMP request type."""
-"""Перелік, що визначає типи SNMP PDU """
+    """SNMP request type.
+
+    Перелік, що визначає типи SNMP PDU.
+    """
+
     GetRequest = 0
     GetNextRequest = 1
     GetResponse = 2
@@ -397,9 +435,12 @@ class PDUType(IntEnum):
 
 @dataclass
 class SNMPMessage:
-    """SNMP message object."""
-"""Клас, який представляє SNMP повідомлення(містить інформацію про це повідомлення). Містить версію, спільноту, тип PDU"""
-"""ID запиту, статус помилки, індекс помилки та зв'язки змінних."""
+    """SNMP message object.
+
+    Клас, який представляє SNMP повідомлення(містить інформацію про це повідомлення). Містить версію, спільноту, тип PDU.
+    ID запиту, статус помилки, індекс помилки та зв'язки змінних.
+    """
+
     version: int
     community: str
     pdu_type: PDUType
@@ -416,10 +457,12 @@ class SNMPMessage:
         ----
             buffer: The bytes to read from.
                     Байти для читання.
+
         Returns:
         -------
             The constructed message, the remaining (unread) buffer.
             Сконструйоване повідомлення, залишився (непрочитаний) буфер.
+
         """
         remaining, buffer = read_tlv_sequence(buffer)
 
@@ -478,16 +521,17 @@ class SNMPMessage:
 
         Variable bindings (in case of a GetRequest message) need to be changed
         afterwards by manually changing self.variable_bindings.
-        
+
         Необхідно змінити прив’язки змінних (у разі повідомлення GetRequest).
         згодом, вручну змінивши self.variable_bindings.
-        
+
         error_status and error_index are not changed.
 
         Returns
         -------
             A new SNMPMessage object containing copied values from self.
             Новий об’єкт SNMPMessage, що містить скопійовані значення з себе.
+
         """
         match self.pdu_type:
             case PDUType.GetRequest | PDUType.SetRequest | PDUType.GetNextRequest:
@@ -525,8 +569,9 @@ MANAGED_OBJECTS = {
 
 
 def get_next(oid: str) -> tuple[str, Object] | tuple[None, None]:
-    """Функція для отримання наступного доступного об'єкта у MIB (Management Information Base) за заданим OID."""
     """Get next accessible element in the MIB for a given OID.
+
+    Функція для отримання наступного доступного об'єкта у MIB (Management Information Base) за заданим OID.
 
     Args:
     ----
@@ -536,11 +581,12 @@ def get_next(oid: str) -> tuple[str, Object] | tuple[None, None]:
     -------
         The next OID and the next managed object in the MIB or None if none exists.
             Наступний OID і наступний керований об’єкт у MIB або None, якщо такого не існує.
+
     """
     # Sort objects by OID lexicographically
     objects = sorted(MANAGED_OBJECTS.items(), key=lambda t: t[0])
     # Get first object which is accessible and has a greater OID
-    next_oid, next_obj = next(
+    return next(
         (
             (o, obj)
             for o, obj in objects
@@ -548,21 +594,23 @@ def get_next(oid: str) -> tuple[str, Object] | tuple[None, None]:
         ),
         (None, None),
     )
-    return next_oid, next_obj
 
 
 def handle_snmp_message(message: SNMPMessage) -> SNMPMessage:
-    """Функція для обробки вхідного SNMP повідомлення та побудови відповіді."""
     """Construct response message and handle possible action.
+
+    Функція для обробки вхідного SNMP повідомлення та побудови відповіді.
 
     Args:
     ----
         message: The incoming SNMP request message.
                     Вхідне повідомлення запиту SNMP.
+
     Returns:
     -------
         The response SNMP message.
         Відповідне повідомлення SNMP.
+
     """
     response = message.response()
     match message.pdu_type:
