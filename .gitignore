@@ -1,1 +1,4 @@
 .venv
+*.tr
+*.nam
+*.png
