@@ -95,7 +95,7 @@ fig, axs = plt.subplots(
 )
 axs[0, 0].set_ylabel("Throughput")
 axs[1, 0].set_ylabel("Loss rate in %")
-axs[1, 0].set_ylim(0.0, MAX_LOSS)
+axs[1, 0].set_ylim(-5.0, MAX_LOSS)
 granularity = args.granularity
 
 for col_idx, tr in enumerate(args.tr):
@@ -104,11 +104,17 @@ for col_idx, tr in enumerate(args.tr):
     axs[1, col_idx].set_xlim(0.0, MAX_TIME)
     annotate_poses = {0: [], 1: []}
     data_frame = read_df(tr)
-
+    print(tr.name)
     for pt, sink_node, label, color in [
         ("cbr", 5, "cbr", "tab:orange"),
         ("tcp", 6, "ftp", "tab:blue"),
     ]:
+        mean_pkt_size = data_frame[
+            (data_frame["event_type"] == "r")
+            & (data_frame["to_node"] == 2)
+            & (data_frame["packet_type"] == pt)
+        ]["packet_size"].mean()
+        print(f"\tMean packet size for {label}: {mean_pkt_size}")
         time, recv = rate(
             data_frame,
             "r",
@@ -127,9 +133,9 @@ for col_idx, tr in enumerate(args.tr):
         )
         loss = np.zeros_like(recv)
         send_mask = send > 0.0
-        loss[send_mask] = recv[send_mask] / send[send_mask]
-        loss[loss > 0.0] = (1 - loss[loss > 0.0]) * 100
-        axs[1, col_idx].plot(time, loss, label=label, color=color)
+        loss[send_mask] = (send[send_mask] - recv[send_mask]) / send[send_mask]
+        loss_avg = (send.sum() - recv.sum()) / send.sum() * 100
+        axs[1, col_idx].plot(time, loss * 100, label=label, color=color)
         # Averages
         recv_avg = recv.mean()
         axs[0, col_idx].plot(
@@ -162,7 +168,6 @@ for col_idx, tr in enumerate(args.tr):
             ),
         )
         annotate_poses[0].append(y_pos)
-        loss_avg = loss.mean()
         axs[1, col_idx].plot(
             time,
             [loss_avg] * len(time),
